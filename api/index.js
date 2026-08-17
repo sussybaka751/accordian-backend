@@ -936,4 +936,8 @@ app.get('/api/sync', authMiddleware, async (req, res) => {
   }
 });
 
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`Accordian Server running on port ${PORT}`);
+});
 module.exports = app;
