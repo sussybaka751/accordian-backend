@@ -7,14 +7,13 @@ const app = express();
 
 const FIREBASE_DB_URL = (process.env.FIREBASE_DB_URL || "https://my-chat-app-8642f-default-rtdb.firebaseio.com").replace(/\/+$/, "");
 const FIREBASE_AUTH_SECRET = process.env.FIREBASE_AUTH_SECRET || "";
-const JWT_SECRET = process.env.JWT_SECRET || "accordian-super-secret-jwt-key-2026";
-
+const JWT_SECRET = process.env.JWT_SECRET || "accordian-super-secret-jwt-key-2026-change-me";
 const DEV_USERS = ["speezely", "$@g3"];
 const DEFAULT_BANNER = "#5865f2";
 const PRESENCE_TIMEOUT_MS = 45 * 1000;
 const TYPING_TIMEOUT_MS = 6 * 1000;
 
-// Universal CORS configuration
+// CORS – allow everything for now (you can lock this later to your frontend domain)
 app.use(cors({
   origin: '*',
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -22,7 +21,7 @@ app.use(cors({
 }));
 app.use(express.json({ limit: '50mb' }));
 
-// Firebase REST Client
+// ---------- Firebase REST Client ----------
 class FirebaseClient {
   constructor(baseUrl, secret) {
     this.baseUrl = baseUrl;
@@ -86,6 +85,7 @@ class FirebaseClient {
 
 const fb = new FirebaseClient(FIREBASE_DB_URL, FIREBASE_AUTH_SECRET);
 
+// ---------- Helpers ----------
 function sanitizeKey(k) {
   if (!k) return "";
   return String(k).toLowerCase().replace(/[.#$/\[\]]/g, "_");
@@ -131,7 +131,6 @@ function authMiddleware(req, res, next) {
   const authHeader = req.headers['authorization'] || '';
   let token = authHeader.startsWith('Bearer ') ? authHeader.slice(7).trim() : req.query.token;
   if (!token) return res.status(401).json({ error: "Unauthorized. Token missing.", success: false });
-
   try {
     const decoded = jwt.verify(token, JWT_SECRET);
     req.username = decoded.sub;
@@ -142,17 +141,17 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// Health Check
-app.get(['/', '/api/health'], (req, res) => {
+// ---------- Health ----------
+app.get(['/', '/api/health', '/health'], (req, res) => {
   res.json({
     status: "online",
-    service: "Accordian Vercel Backend API",
+    service: "Accordian Backend (Render)",
     version: "2.0.0",
     message: "Backend is running smoothly 24/7!"
   });
 });
 
-// Register
+// ---------- Auth ----------
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -185,7 +184,6 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Login
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { username, password } = req.body;
@@ -199,6 +197,7 @@ app.post('/api/auth/login', async (req, res) => {
     if (user.passwordHash && user.salt) {
       isValid = hashPassword(password, user.salt) === user.passwordHash;
     } else if (user.password) {
+      // Legacy plaintext migration
       if (user.password === password) {
         isValid = true;
         const newSalt = crypto.randomBytes(16).toString('hex');
@@ -216,7 +215,6 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Profile
 app.get('/api/auth/me', authMiddleware, async (req, res) => {
   try {
     const user = await fb.get(`users/${req.sanitizedUser}`);
@@ -227,6 +225,7 @@ app.get('/api/auth/me', authMiddleware, async (req, res) => {
   }
 });
 
+// ---------- Users ----------
 app.get('/api/users', authMiddleware, async (req, res) => {
   try {
     const users = (await fb.get("users")) || {};
@@ -264,7 +263,9 @@ app.post('/api/users/:username/tag', authMiddleware, async (req, res) => {
       await fb.update(`users/${targetSan}`, { customTag: null });
     } else {
       if (!req.body.text) return res.status(400).json({ error: "Text required.", success: false });
-      await fb.update(`users/${targetSan}`, { customTag: { text: String(req.body.text).slice(0, 20), color: req.body.color || "#00e5ff" } });
+      await fb.update(`users/${targetSan}`, {
+        customTag: { text: String(req.body.text).slice(0, 20), color: req.body.color || "#00e5ff" }
+      });
     }
     res.json({ success: true, message: "Tag updated." });
   } catch (err) {
@@ -272,12 +273,16 @@ app.post('/api/users/:username/tag', authMiddleware, async (req, res) => {
   }
 });
 
-// Presence
+// ---------- Presence ----------
 app.post('/api/presence/heartbeat', authMiddleware, async (req, res) => {
   try {
     const now = Date.now();
     const connId = req.body.connectionId || "default";
-    await fb.update(`status/${req.sanitizedUser}`, { state: "online", lastPing: now, [`connections/${connId}`]: now });
+    await fb.update(`status/${req.sanitizedUser}`, {
+      state: "online",
+      lastPing: now,
+      [`connections/${connId}`]: now
+    });
     res.json({ success: true, timestamp: now });
   } catch (err) {
     res.status(500).json({ error: err.message, success: false });
@@ -286,7 +291,11 @@ app.post('/api/presence/heartbeat', authMiddleware, async (req, res) => {
 
 app.post('/api/presence/offline', authMiddleware, async (req, res) => {
   try {
-    await fb.set(`status/${req.sanitizedUser}`, { state: "offline", lastOnline: Date.now(), connections: null });
+    await fb.set(`status/${req.sanitizedUser}`, {
+      state: "offline",
+      lastOnline: Date.now(),
+      connections: null
+    });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message, success: false });
@@ -300,7 +309,9 @@ app.get('/api/presence', authMiddleware, async (req, res) => {
     const computed = {};
     for (const [k, val] of Object.entries(statuses)) {
       if (!val) continue;
-      const active = (val.connections && Object.values(val.connections).some(ts => now - Number(ts) < PRESENCE_TIMEOUT_MS)) || (val.lastPing && now - Number(val.lastPing) < PRESENCE_TIMEOUT_MS);
+      const active =
+        (val.connections && Object.values(val.connections).some(ts => now - Number(ts) < PRESENCE_TIMEOUT_MS)) ||
+        (val.lastPing && now - Number(val.lastPing) < PRESENCE_TIMEOUT_MS);
       computed[k] = active ? "online" : "offline";
     }
     res.json({ success: true, statuses: computed });
@@ -309,7 +320,7 @@ app.get('/api/presence', authMiddleware, async (req, res) => {
   }
 });
 
-// Typing
+// ---------- Typing ----------
 app.post('/api/typing', authMiddleware, async (req, res) => {
   try {
     const { typingKey, isTyping } = req.body;
@@ -338,7 +349,7 @@ app.get('/api/typing', authMiddleware, async (req, res) => {
   }
 });
 
-// Messages
+// ---------- Messages ----------
 app.get('/api/messages', authMiddleware, async (req, res) => {
   try {
     const targetDm = req.query.target_dm || "";
@@ -402,7 +413,11 @@ app.patch('/api/messages/:id', authMiddleware, async (req, res) => {
     if (msg.username.toLowerCase() !== req.username.toLowerCase() && !isDev(req.username)) {
       return res.status(403).json({ error: "Can only edit own messages.", success: false });
     }
-    await fb.update(`messages/${req.params.id}`, { message: req.body.message, is_edited: true, edited_at: new Date().toISOString() });
+    await fb.update(`messages/${req.params.id}`, {
+      message: req.body.message,
+      is_edited: true,
+      edited_at: new Date().toISOString()
+    });
     res.json({ success: true, message: { ...msg, message: req.body.message, is_edited: true } });
   } catch (err) {
     res.status(500).json({ error: err.message, success: false });
@@ -433,7 +448,6 @@ app.post('/api/messages/:id/reactions', authMiddleware, async (req, res) => {
     const idx = list.findIndex(u => (typeof u === "string" ? u : u.username || "").toLowerCase() === req.username.toLowerCase());
     if (idx !== -1) list.splice(idx, 1);
     else list.push(req.username);
-
     if (list.length === 0) await fb.remove(`messages/${req.params.id}/reactions/${cleanEmoji}`);
     else await fb.set(`messages/${req.params.id}/reactions/${cleanEmoji}`, list);
     res.json({ success: true, emoji, users: list });
@@ -442,7 +456,7 @@ app.post('/api/messages/:id/reactions', authMiddleware, async (req, res) => {
   }
 });
 
-// Groups
+// ---------- Groups ----------
 app.get('/api/groups', authMiddleware, async (req, res) => {
   try {
     const groups = (await fb.get("groups")) || {};
@@ -484,6 +498,7 @@ app.patch('/api/groups/:id', authMiddleware, async (req, res) => {
     const group = await fb.get(`groups/${req.params.id}`);
     if (!group) return res.status(404).json({ error: "Group not found.", success: false });
     if (!canManageGroup(group, req.username)) return res.status(403).json({ error: "Forbidden.", success: false });
+
     const updates = {};
     if (req.body.name !== undefined) updates.name = String(req.body.name).slice(0, 40);
     if (req.body.icon !== undefined) updates.icon = req.body.icon;
@@ -499,10 +514,13 @@ app.post('/api/groups/:id/members', authMiddleware, async (req, res) => {
     const group = await fb.get(`groups/${req.params.id}`);
     if (!group) return res.status(404).json({ error: "Group not found.", success: false });
     if (!canManageGroup(group, req.username)) return res.status(403).json({ error: "Forbidden.", success: false });
+
     const targetUser = req.body.username;
     if (!targetUser) return res.status(400).json({ error: "Username required.", success: false });
     const members = group.members || [];
-    if (members.some(m => m.toLowerCase() === targetUser.toLowerCase())) return res.status(409).json({ error: "Already in group.", success: false });
+    if (members.some(m => m.toLowerCase() === targetUser.toLowerCase())) {
+      return res.status(409).json({ error: "Already in group.", success: false });
+    }
     members.push(targetUser);
     await fb.update(`groups/${req.params.id}`, { members });
     res.json({ success: true, members });
@@ -517,6 +535,7 @@ app.delete('/api/groups/:id/members/:username', authMiddleware, async (req, res)
     if (!group) return res.status(404).json({ error: "Group not found.", success: false });
     const isSelf = req.params.username.toLowerCase() === req.username.toLowerCase();
     if (!isSelf && !canManageGroup(group, req.username)) return res.status(403).json({ error: "Forbidden.", success: false });
+
     const members = (group.members || []).filter(m => m.toLowerCase() !== req.params.username.toLowerCase());
     await fb.update(`groups/${req.params.id}`, { members });
     res.json({ success: true, members });
@@ -537,13 +556,15 @@ app.delete('/api/groups/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Servers & Channels
+// ---------- Servers & Channels ----------
 app.get('/api/servers', authMiddleware, async (req, res) => {
   try {
     const servers = (await fb.get("servers")) || {};
     const accessible = {};
     for (const [sId, s] of Object.entries(servers)) {
-      if (s && (getUserServerRole(s, req.username) || isDev(req.username) || s.forced)) accessible[sId] = s;
+      if (s && (getUserServerRole(s, req.username) || isDev(req.username) || s.forced)) {
+        accessible[sId] = s;
+      }
     }
     res.json({ success: true, servers: accessible });
   } catch (err) {
@@ -574,6 +595,7 @@ app.patch('/api/servers/:id', authMiddleware, async (req, res) => {
   try {
     const server = await fb.get(`servers/${req.params.id}`);
     if (!server) return res.status(404).json({ error: "Server not found.", success: false });
+
     const updates = {};
     if (req.body.forced !== undefined) {
       if (!isDev(req.username)) return res.status(403).json({ error: "Dev only.", success: false });
@@ -607,7 +629,10 @@ app.delete('/api/servers/:id', authMiddleware, async (req, res) => {
 
 app.post('/api/servers/:id/join', authMiddleware, async (req, res) => {
   try {
-    await fb.set(`servers/${req.params.id}/members/${req.sanitizedUser}`, { username: req.username, role: "member" });
+    await fb.set(`servers/${req.params.id}/members/${req.sanitizedUser}`, {
+      username: req.username,
+      role: "member"
+    });
     res.json({ success: true, role: "member" });
   } catch (err) {
     res.status(500).json({ error: err.message, success: false });
@@ -624,7 +649,10 @@ app.post('/api/servers/:id/members', authMiddleware, async (req, res) => {
     }
     const targetUser = req.body.username;
     if (!targetUser) return res.status(400).json({ error: "Username required.", success: false });
-    await fb.set(`servers/${req.params.id}/members/${sanitizeKey(targetUser)}`, { username: targetUser, role: req.body.role || "member" });
+    await fb.set(`servers/${req.params.id}/members/${sanitizeKey(targetUser)}`, {
+      username: targetUser,
+      role: req.body.role || "member"
+    });
     res.json({ success: true, username: targetUser });
   } catch (err) {
     res.status(500).json({ error: err.message, success: false });
@@ -636,7 +664,9 @@ app.patch('/api/servers/:id/members/:username/role', authMiddleware, async (req,
     const server = await fb.get(`servers/${req.params.id}`);
     if (!server) return res.status(404).json({ error: "Server not found.", success: false });
     if (!canManageServer(server, req.username)) return res.status(403).json({ error: "Forbidden.", success: false });
-    await fb.update(`servers/${req.params.id}/members/${sanitizeKey(req.params.username)}`, { role: req.body.role || "member" });
+    await fb.update(`servers/${req.params.id}/members/${sanitizeKey(req.params.username)}`, {
+      role: req.body.role || "member"
+    });
     res.json({ success: true, role: req.body.role });
   } catch (err) {
     res.status(500).json({ error: err.message, success: false });
@@ -662,6 +692,7 @@ app.post('/api/servers/:id/channels', authMiddleware, async (req, res) => {
     const server = await fb.get(`servers/${req.params.id}`);
     if (!server) return res.status(404).json({ error: "Server not found.", success: false });
     if (!canManageServer(server, req.username)) return res.status(403).json({ error: "Forbidden.", success: false });
+
     const rawName = (req.body.name || "").trim().toLowerCase().replace(/[\s#]/g, "-");
     if (!rawName) return res.status(400).json({ error: "Name required.", success: false });
     const data = { name: rawName, isEditorOnly: Boolean(req.body.isEditorOnly) };
@@ -677,8 +708,12 @@ app.patch('/api/servers/:id/channels/:channelId', authMiddleware, async (req, re
     const server = await fb.get(`servers/${req.params.id}`);
     if (!server) return res.status(404).json({ error: "Server not found.", success: false });
     if (!canManageServer(server, req.username)) return res.status(403).json({ error: "Forbidden.", success: false });
-    const newName = req.body.name ? req.body.name.trim().toLowerCase().replace(/[\s#]/g, "-") : req.params.channelId;
+
+    const newName = req.body.name
+      ? req.body.name.trim().toLowerCase().replace(/[\s#]/g, "-")
+      : req.params.channelId;
     const isEditorOnly = req.body.isEditorOnly !== undefined ? Boolean(req.body.isEditorOnly) : false;
+
     if (newName !== req.params.channelId) {
       await fb.set(`servers/${req.params.id}/channels/${newName}`, { name: newName, isEditorOnly });
       await fb.remove(`servers/${req.params.id}/channels/${req.params.channelId}`);
@@ -703,7 +738,7 @@ app.delete('/api/servers/:id/channels/:channelId', authMiddleware, async (req, r
   }
 });
 
-// Announcements
+// ---------- Announcements ----------
 app.get('/api/announcements', authMiddleware, async (req, res) => {
   try {
     const announcements = (await fb.get("announcements")) || {};
@@ -719,7 +754,11 @@ app.post('/api/announcements', authMiddleware, async (req, res) => {
   try {
     if (!isDev(req.username)) return res.status(403).json({ error: "Dev only.", success: false });
     if (!req.body.message) return res.status(400).json({ error: "Message required.", success: false });
-    const newAnn = { username: req.username, message: String(req.body.message), created_at: new Date().toISOString() };
+    const newAnn = {
+      username: req.username,
+      message: String(req.body.message),
+      created_at: new Date().toISOString()
+    };
     const pushRes = await fb.push("announcements", newAnn);
     res.json({ success: true, announcementId: pushRes.name, announcement: newAnn });
   } catch (err) {
@@ -727,7 +766,7 @@ app.post('/api/announcements', authMiddleware, async (req, res) => {
   }
 });
 
-// WebRTC Signaling
+// ---------- WebRTC / Calls ----------
 app.get('/api/calls', authMiddleware, async (req, res) => {
   try {
     const calls = (await fb.get("calls")) || {};
@@ -735,7 +774,10 @@ app.get('/api/calls', authMiddleware, async (req, res) => {
     const myLow = req.username.toLowerCase();
     for (const [cId, c] of Object.entries(calls)) {
       if (!c || c.status === "ended") continue;
-      const isPart = c.caller?.toLowerCase() === myLow || c.callee?.toLowerCase() === myLow || (Array.isArray(c.participants) && c.participants.some(p => p.toLowerCase() === myLow));
+      const isPart =
+        c.caller?.toLowerCase() === myLow ||
+        c.callee?.toLowerCase() === myLow ||
+        (Array.isArray(c.participants) && c.participants.some(p => p.toLowerCase() === myLow));
       if (isPart) myActive[cId] = c;
     }
     res.json({ success: true, calls: myActive });
@@ -773,6 +815,7 @@ app.post('/api/calls/start', authMiddleware, async (req, res) => {
     }
 
     await fb.set(`calls/${callId}`, callData);
+
     if (req.body.target_dm) {
       await fb.push("messages", {
         username: req.username,
@@ -783,6 +826,7 @@ app.post('/api/calls/start', authMiddleware, async (req, res) => {
         created_at: new Date().toISOString()
       });
     }
+
     res.json({ success: true, callId, call: callData });
   } catch (err) {
     res.status(500).json({ error: err.message, success: false });
@@ -837,7 +881,10 @@ app.post('/api/calls/:id/leave', authMiddleware, async (req, res) => {
     await fb.remove(`calls/${req.params.id}/joined/${req.sanitizedUser}`);
     const joined = (await fb.get(`calls/${req.params.id}/joined`)) || {};
     if (Object.keys(joined).length === 0) {
-      await fb.update(`calls/${req.params.id}`, { status: "ended", ended_at: new Date().toISOString() });
+      await fb.update(`calls/${req.params.id}`, {
+        status: "ended",
+        ended_at: new Date().toISOString()
+      });
     }
     res.json({ success: true });
   } catch (err) {
@@ -882,7 +929,7 @@ app.get('/api/calls/:id/signals', authMiddleware, async (req, res) => {
   }
 });
 
-// Bulk State Sync
+// ---------- Bulk Sync ----------
 app.get('/api/sync', authMiddleware, async (req, res) => {
   try {
     const [users, groups, servers, announcements, calls] = await Promise.all([
@@ -916,7 +963,11 @@ app.get('/api/sync', authMiddleware, async (req, res) => {
     const myLow = req.username.toLowerCase();
     for (const [cId, c] of Object.entries(calls || {})) {
       if (c && c.status !== "ended") {
-        if (c.caller?.toLowerCase() === myLow || c.callee?.toLowerCase() === myLow || (Array.isArray(c.participants) && c.participants.some(p => p.toLowerCase() === myLow))) {
+        if (
+          c.caller?.toLowerCase() === myLow ||
+          c.callee?.toLowerCase() === myLow ||
+          (Array.isArray(c.participants) && c.participants.some(p => p.toLowerCase() === myLow))
+        ) {
           myCalls[cId] = c;
         }
       }
@@ -936,8 +987,10 @@ app.get('/api/sync', authMiddleware, async (req, res) => {
   }
 });
 
+// ---------- Start server (Render) ----------
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-  console.log(`Accordian Server running on port ${PORT}`);
+  console.log(`Accordian Backend running on port ${PORT}`);
 });
+
 module.exports = app;
