@@ -15,10 +15,16 @@ const TYPING_TIMEOUT_MS = 6 * 1000;
 
 // CORS – allow everything for now (you can lock this later to your frontend domain)
 app.use(cors({
-  origin: '*',
+  origin: true,               // reflects the request origin
+  credentials: false,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 }));
+
+// Explicitly handle OPTIONS for all routes
+app.options('*', cors());
 app.use(express.json({ limit: '50mb' }));
 
 // ---------- Firebase REST Client ----------
