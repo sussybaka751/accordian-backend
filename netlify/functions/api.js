@@ -804,6 +804,55 @@ app.post('/api/calls/:id/leave', authMiddleware, async (req, res) => {
   }
 });
 
+app.post('/api/calls/:id/media-state', authMiddleware, async (req, res) => {
+  try {
+    const updates = {};
+    if (req.body.callerVideoOff !== undefined) updates.callerVideoOff = Boolean(req.body.callerVideoOff);
+    if (req.body.calleeVideoOff !== undefined) updates.calleeVideoOff = Boolean(req.body.calleeVideoOff);
+    await fb.update(`calls/${req.params.id}`, updates);
+    res.json({ success: true, mediaState: updates });
+  } catch (err) {
+    res.status(500).json({ error: err.message, success: false });
+  }
+});
+
+app.post('/api/calls/:id/signal', authMiddleware, async (req, res) => {
+  try {
+    const { type, sdp, candidate, remoteUser } = req.body;
+    if (remoteUser) {
+      const remoteSan = sanitizeKey(remoteUser);
+      const basePath = `call_signals/${req.params.id}/peers/${req.sanitizedUser}_to_${remoteSan}`;
+      if (type === "offer") await fb.set(`${basePath}/offer`, { sdp, type });
+      else if (type === "answer") await fb.set(`${basePath}/answer`, { sdp, type });
+      else if (type === "candidate" && candidate) await fb.push(`${basePath}/candidates`, candidate);
+    } else {
+      if (type === "offer") await fb.set(`call_signals/${req.params.id}/offer`, { sdp, type });
+      else if (type === "answer") await fb.set(`call_signals/${req.params.id}/answer`, { sdp, type });
+      else if (type === "offerCandidate" && candidate) await fb.push(`call_signals/${req.params.id}/offerCandidates`, candidate);
+      else if (type === "answerCandidate" && candidate) await fb.push(`call_signals/${req.params.id}/answerCandidates`, candidate);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message, success: false });
+  }
+});
+
+app.get('/api/calls/:id/signals', authMiddleware, async (req, res) => {
+  try {
+    const remoteUser = req.query.remoteUser;
+    if (remoteUser) {
+      const remoteSan = sanitizeKey(remoteUser);
+      const signals = (await fb.get(`call_signals/${req.params.id}/peers/${remoteSan}_to_${req.sanitizedUser}`)) || {};
+      res.json({ success: true, signals });
+    } else {
+      const signals = (await fb.get(`call_signals/${req.params.id}`)) || {};
+      res.json({ success: true, signals });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message, success: false });
+  }
+});
+
 // ---------- Bulk Sync ----------
 app.get('/api/sync', authMiddleware, async (req, res) => {
   try {
