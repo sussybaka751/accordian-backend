@@ -24,6 +24,21 @@ app.use(cors({
 app.options('*', cors());
 app.use(express.json({ limit: '50mb' }));
 
+// Netlify hands this function the raw invocation path (e.g.
+// "/.netlify/functions/api/health" or "/.netlify/functions/api/api/health"
+// depending on how it was reached), but every route below is defined as
+// "/api/...". Normalize req.url here so any of those variants resolves to
+// the same route, instead of 404ing with Express's "Cannot GET ...".
+app.use((req, res, next) => {
+  let p = req.url;
+  const marker = '/.netlify/functions/api';
+  const idx = p.indexOf(marker);
+  if (idx !== -1) p = p.slice(idx + marker.length) || '/';
+  if (!p.startsWith('/api')) p = '/api' + p;
+  req.url = p;
+  next();
+});
+
 // ---------- Firebase REST Client ----------
 class FirebaseClient {
   constructor(baseUrl, secret) {
@@ -96,6 +111,10 @@ function hashPassword(password, salt) {
 function cleanUserProfile(u) {
   if (!u) return null;
   const { password, passwordHash, salt, ...safeProfile } = u;
+  // isDev is computed fresh from the server-side DEV_USERS list every time —
+  // it is never read from stored user data, so nothing client-side can ever
+  // set or fake it.
+  safeProfile.isDev = isDev(u.username);
   return safeProfile;
 }
 function getUserServerRole(server, username) {
